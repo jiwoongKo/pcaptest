@@ -1,127 +1,98 @@
 #include <pcap.h>
 #include <stdio.h>
-#include <stdint.h>
+#include <stdlib.h>
 #include <arpa/inet.h>
+#include <stdint.h>
+#include "header_lib.h"
 
 
-#define ETHER_ADDR_LEN 6
-#define SIZE_ETHERNET 14
-
-/* Ethernet Header */
-struct sniff_ethernet {
-    u_char ether_shost[ETHER_ADDR_LEN]; // src MAC address
-    u_char ether_dhost[ETHER_ADDR_LEN]; // dst MAC address
-    u_short ether_type;
-};
-
-#define IP_HL(ip) (((ip)->ip_vhl) &0x0f)
-#define IP_V(ip) (((ip)->ip_vhl) >>4)
-
-/* IP Header */
-struct sniff_ip {
-    u_char ip_vhl;
-    u_char ip_tos;          // type of service
-    u_short ip_len;
-    u_short ip_id;
-    u_short ip_off;         // offset
-#define IP_RF 0x8000        // reserved fragment flag
-#define IP_DF 0x4000        // dont fragment flag
-#define IP_MF 0x2000        // more fragment flag
-#define IP_OFFMASK 0x1fff   // mask
-    u_char ip_ttl;          // time to live
-    u_char ip_p;            // ip protocol type
-    u_short ip_sum;        // checksum
-    struct in_addr ip_src; // src ip address
-    struct in_addr ip_dst; // dst ip address
-};
-
-typedef u_int tcp_seq;
-
-struct sniff_tcp {
-    u_short th_sport;   // src port
-    u_short th_dport;   // dst port
-    tcp_seq th_seq;     // sequential number
-    tcp_seq th_ack;
-    u_char th_offx2;
-#define TH_OFF(th) (((th)->th_offx2 & 0xf0) >> 4)
-    u_char th_flags;
-#define TH_FIN 0x01
-#define TH_SYN 0x02
-#define TH_RST 0x04
-#define TH_PUSH 0x08
-#define TH_ACK 0x10
-#define TH_URG 0x20
-#define TH_ECE 0x40
-#define TH_CWR 0x80
-#define TH_FLAGS (TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
-    u_short th_win;     // window
-    u_short th_sum;     // checksum
-    u_short th_urp;     // urgent pointer
-};
-
-struct sniff_ethernet *eth;
-struct sniff_ip *ip;
-struct sniff_tcp *tcp;
-char* payload;
-
+struct sniff_ip_hdr* iph;
+struct sniff_tcp_hdr* tcph;
+struct sniff_ethernet *ethernet;
+bpf_u_int32 mask;
+bpf_u_int32 net;
+char *payload;
 u_int size_ip;
 u_int size_tcp;
+uint16_t ether_type;
 
 void usage() {
-    printf("syntax: pcap-test <interface>\n");
-    printf("sample: pcap-test wlan0\n");
+    printf("syntax: pcap_test <interface>\n");
+    printf("sample: pcap_test wlan0\n");
 }
 
-int main(int argc, char* argv[]){
-    if (argc != 2){
-        usage();
-        return -1;
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+    usage();
+    return -1;
     }
 
     char* dev = argv[1];
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
-    if (handle == nullptr){
-        fprintf(stderr, "pcap_open_live(%s) return nullptr - %s\n", dev, errbuf);
-        return -1;
+
+    if (handle == NULL) {
+        fprintf(stderr, "couldn't open device %s: %s\n", dev, errbuf);
+    return -1;
     }
 
 
+  while (true) {
+    struct pcap_pkthdr* header;
+    const u_char* packet;
+    int res = pcap_next_ex(handle, &header, &packet);
+    if (res == 0) continue;
+    if (res == -1 || res == -2) break;
+    printf("\n============%u bytes captured============\n", header->caplen);
 
-    while (true){
-        struct pcap_pkthdr* header;
-        const u_char* packet;
-        int res = pcap_next_ex(handle, &header, &packet);
-        if (res == 0) continue;
-        if (res == -1 || res == -2){
-            printf("pcap_next_ex return %d(%s)\n", res, pcap_geterr(handle));
-            break;
-        }
+    int i, payload_len;
 
-        eth = (struct sniff_ethernet *)packet;
-        printf("src Mac: %02x:%02x:%02x:%02x:%02x:%02x \n",
-               eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[2],
-               eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5]
-              );
-        printf("dst Mac: %02x:%02x:%02x:%02x:%02x:%02x \n",
-               eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[2],
-               eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5]
-              );
-        ip = (struct sniff_ip *)(packet+SIZE_ETHERNET);
-        size_ip = IP_HL(ip)*4;
-        printf("src IP: %s\n", inet_ntoa(ip->ip_src));
-        printf("dst IP: %s\n", inet_ntoa(ip->ip_dst));
-        tcp = (struct sniff_tcp*)(packet+SIZE_ETHERNET+size_ip);
-        size_tcp = TH_OFF(tcp)*4;
-        payload=(char *)(packet+SIZE_ETHERNET+size_ip+ size_tcp);
-        int payload_len=ntohs(ip->ip_len) - (size_tcp + size_ip);
-        printf("src Port : %d\n", ntohs(tcp->th_sport));
-        printf("dst Port : %d\n", ntohs(tcp->th_dport));
-        printf("payload length = %d\n", payload_len);
-        for(int i=0; i<16; i++){
-                printf("%x", payload[i]);
-            }
-            printf("\n================================================\n");
+
+    ethernet = (struct sniff_ethernet*)(packet);
+    printf("MAC src address : ");
+    for(i = 0; i < ETHER_ALEN; i++){
+        printf("%02x ", ethernet->ether_shost[i]);
+    }
+    printf("\nMac dst address : ");
+    for(i = 0; i < ETHER_ALEN; i++){
+        printf("%02x ", ethernet->ether_dhost[i]);
     }
 
+    printf("\n");
+    ether_type = ntohs(ethernet->ether_type);
+    /*
+    if (ether_type != ETHERTYPE_IP){
+        continue;
+    }
+    */
+    iph = (struct sniff_ip_hdr*)(packet + SIZE_ETHERNET);
+    printf("==================IP Packet=============\n");
+    printf("src IP : %s\n", inet_ntoa(iph->ip_src));
+    printf("dst IP : %s\n", inet_ntoa(iph->ip_dst));
+
+    if (iph->ip_p != IP_TCP){
+        continue;
+    }
+
+    size_ip = (iph->ip_hl)*4;
+    tcph = (struct sniff_tcp_hdr *)(packet + SIZE_ETHERNET + size_ip);
+    printf("src Port : %d\n ", ntohs(tcph->th_sport));
+    printf("dst Port : %d\n ", ntohs(tcph->th_dport));
+
+    size_tcp = (tcph->th_off)*4;
+    payload = (char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
+    payload_len = ntohs(iph->ip_len) - (size_ip + size_tcp);
+    if(payload_len == 0) printf("No payload data");
+
+    (payload_len > 16 ? payload_len = 16 : payload_len);
+    for(i = 0; i < payload_len; i++){
+            printf("%02x ", payload[i]);
+    }
+    printf("\n");
+
+   }
+
+     pcap_close(handle);
+     return 0;
 }
