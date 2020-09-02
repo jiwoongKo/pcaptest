@@ -6,12 +6,10 @@
 #include "header_lib.h"
 
 
-struct sniff_ip_hdr* iph;
-struct sniff_tcp_hdr* tcph;
-struct sniff_ethernet *ethernet;
-bpf_u_int32 mask;
-bpf_u_int32 net;
-char *payload;
+struct sniff_ip_hdr* iph;           /* ip 헤더 */
+struct sniff_tcp_hdr* tcph;         /* tcp 헤더 */
+struct sniff_ethernet *ethernet;    /* 이더넷 헤더 */
+char *payload; 
 u_int size_ip;
 u_int size_tcp;
 uint16_t ether_type;
@@ -48,46 +46,56 @@ int main(int argc, char* argv[]) {
 
     int i, payload_len;
 
-
+    /* 이더넷 헤더 */
     ethernet = (struct sniff_ethernet*)(packet);
     printf("MAC src address : ");
-    for(i = 0; i < ETHER_ALEN; i++){
+    for(i = 0; i < ETHER_ALEN; i++){                 /* 이더넷 어드레스 반복되는것 for문으로 처리 */
         printf("%02x ", ethernet->ether_shost[i]);
     }
     printf("\nMac dst address : ");
     for(i = 0; i < ETHER_ALEN; i++){
         printf("%02x ", ethernet->ether_dhost[i]);
     }
-
     printf("\n");
+     
+    /* 프로토콜 타입 변환 */
     ether_type = ntohs(ethernet->ether_type);
-    /*
+    
+      
+      
+    /* ether_type -> 0x0800인지 확인 */
     if (ether_type != ETHERTYPE_IP){
         continue;
     }
-    */
+    
+    /* 설정한 ip 헤더를 통해 packet 출발, 도착 address 출력 */
     iph = (struct sniff_ip_hdr*)(packet + SIZE_ETHERNET);
     printf("==================IP Packet=============\n");
     printf("src IP : %s\n", inet_ntoa(iph->ip_src));
     printf("dst IP : %s\n", inet_ntoa(iph->ip_dst));
 
+    /* TCP 패킷이 아니라면 continue */
     if (iph->ip_p != IP_TCP){
         continue;
     }
 
     size_ip = (iph->ip_hl)*4;
+    /* tcp 데이터 출력 */
     tcph = (struct sniff_tcp_hdr *)(packet + SIZE_ETHERNET + size_ip);
     printf("src Port : %d\n ", ntohs(tcph->th_sport));
     printf("dst Port : %d\n ", ntohs(tcph->th_dport));
 
+    
     size_tcp = (tcph->th_off)*4;
+    /* 페이로드 데이터 범위 설정 */
     payload = (char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
     payload_len = ntohs(iph->ip_len) - (size_ip + size_tcp);
     if(payload_len == 0) printf("No payload data");
-
+    
+    /* 기존에는 페이로드 데이터가 16 이하에서는 구분을 안해놔서 없는 데이터 출력 하는것까지 보완 */
     (payload_len > 16 ? payload_len = 16 : payload_len);
     for(i = 0; i < payload_len; i++){
-            printf("%02x ", payload[i]);
+            printf("%02x ", payload[i]);    /* 페이로드 데이터 출력 */
     }
     printf("\n");
 
