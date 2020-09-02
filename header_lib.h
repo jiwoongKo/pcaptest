@@ -3,7 +3,7 @@
 
 #define ETHER_ALEN 6
 #define SIZE_ETHERNET 14
-#define ETHERTYPE_IP 0x8000
+#define ETHERTYPE_IP 0x0800
 #define IP_TCP 6
 
 
